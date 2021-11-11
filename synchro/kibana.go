@@ -17,6 +17,7 @@ package synchro
 
 import (
 	"crypto/tls"
+	"fmt"
 	"os"
 	"regexp"
 
@@ -73,6 +74,11 @@ type Error struct {
 
 type MigrationVersion struct {
 	IndexPattern string `json:"index-pattern"`
+}
+
+type IndexPatternObject struct {
+	Field      string `json:"field"`
+	Version    string `json:"version"`
 }
 
 func getKibanaSpaces(esIndices []string) []Space {
@@ -290,5 +296,39 @@ func kibanaOpendistroSavedObjectBulkCreate(data []Tenant) {
 		}
 
 		log.Info("Index pattern has been updated")
+
+		if viper.GetBool("opendistro.autoReload") {
+			kibanaReloadIndexPattern(tenant.Name, tenant.Indices)
+		}
 	}
+}
+
+func kibanaReloadIndexPattern(tenant string, indices []string) {
+	client := resty.New().
+		SetTLSClientConfig(&tls.Config{
+			InsecureSkipVerify: !viper.GetBool("kibana.ssl_certificate_verification"),
+		})
+
+	if viper.GetBool("kibana.auth.enable") {
+		client.SetBasicAuth(viper.GetString("kibana.auth.username"), viper.GetString("kibana.auth.password"))
+	}
+
+	for _, index := range indices {
+		urlGetField := viper.GetString("kibana.host") + "/api/index_patterns/_fields_for_wildcard?pattern=" + index + "*&meta_fields=_source&meta_fields=_id&meta_fields=_type&meta_fields=_index&meta_fields=_score"
+
+		resp, err := client.R().
+			SetHeader("kbn-xsrf", "true").
+			SetHeader("securitytenant", tenant).
+			Get(urlGetField)
+
+		if err != nil {
+			log.Fatalln(err)
+		}
+		
+		var esIndex EsIndex
+		json.Unmarshal(resp.Body(), &esIndex)	
+
+		fmt.Println(resp)
+	}
+
 }
